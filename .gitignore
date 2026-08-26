@@ -1,0 +1,7 @@
+/goo
+/goo.test
+*.out
+*.test
+/tmp/
+data/
+dist/
