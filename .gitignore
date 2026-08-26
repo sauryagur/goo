@@ -5,3 +5,5 @@
 /tmp/
 data/
 dist/
+/bin/
+*.exe
