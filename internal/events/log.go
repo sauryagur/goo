@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -65,6 +66,12 @@ func Open(dir string) (*Log, error) {
 		FilePerms:   0o600,
 	})
 	if err != nil {
+		// a second process (e.g. another `goo server` or CLI on the same
+		// root) holds the WAL's exclusive lock; say so instead of letting
+		// wal's "log corrupt" message mislead the user.
+		if strings.Contains(err.Error(), "lock") || strings.Contains(err.Error(), "in use") || strings.Contains(err.Error(), "busy") {
+			return nil, fmt.Errorf("open wal: another goo process holds %s (only one process may own a root at a time): %w", dir, err)
+		}
 		return nil, fmt.Errorf("open wal: %w", err)
 	}
 	return &Log{

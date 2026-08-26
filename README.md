@@ -273,6 +273,12 @@ A Bubble Tea (v2) terminal UI with three panes:
 * **single-node**: there is exactly one GOO node. There is **no replication,
   no consensus, no leader election, no consumer groups** today. Do not call
   GOO distributed — it isn't.
+* **one process owns a root at a time**: the durable log (a
+  [tidwall/wal](https://github.com/tidwall/wal)) takes an exclusive lock, so
+  the `server` and the local CLI commands (`put`/`get`/…) must not open the
+  *same* root concurrently. Use the HTTP API (or `curl`) to feed a running
+  server; use the local CLI commands against a root the server isn't using.
+  This is a deliberate single-writer constraint, not a bug.
 * the treemap visualizes **bytes per bucket**; object-level nesting and the
   `objects` / `event-activity` modes mentioned in the design are not built.
 * GET returns the full object into the response; there is no ranged GET yet.
@@ -288,8 +294,15 @@ cd goo
 # run the whole test suite (with the race detector)
 go test -race ./...
 
+# or use the Makefile targets
+make test-race      # go test -race ./...
+make vet           # go vet ./...
+make fmt-check     # gofmt -l . (fails if unformatted)
+make bench         # engine benchmarks
+
 # start a server on :8080 with local data in ./goo-data
 go run ./cmd/goo server
+# (or) make run-server
 
 # in another shell, push an object and watch the event stream
 go run ./cmd/goo put images/cat.jpg ./cat.jpg
@@ -297,9 +310,14 @@ curl -N http://localhost:8080/v1/buckets/images/events?from=1
 
 # or just use the terminal UI
 go run ./cmd/goo tui
+# (or) make run-tui
 ```
 
 No external services required — everything runs locally.
+
+> Note: the `server` and the local CLI commands take an exclusive lock on a
+> root, so don't point both at the same directory at once. Feed a running
+> server over HTTP; use the local CLI against a root the server isn't using.
 
 ---
 
