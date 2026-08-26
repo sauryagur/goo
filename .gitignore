@@ -7,3 +7,6 @@ data/
 dist/
 /bin/
 *.exe
+
+# runtime data (created by `goo server`/CLI)
+goo-data/
