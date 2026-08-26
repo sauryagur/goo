@@ -4,7 +4,11 @@ import "testing"
 
 func TestValidBucket(t *testing.T) {
 	valid := []string{"images", "my-bucket", "abc", "bucket123", "a.b-c_d"}
-	invalid := []string{"", "a", "ab", "AB", "Bucket", "has space", "has/slash", "../etc", ".hidden", "-lead", "trail-", strings63plus()}
+	invalid := []string{
+		"", "a", "ab", "AB", "Bucket", "has space", "has/slash", "../etc",
+		".hidden", "-lead", "trail-", strings63plus(),
+		"con", "nul", "com1", "lpt9", "NUL", "COM1", // windows reserved, case-insensitive
+	}
 
 	for _, b := range valid {
 		if !ValidBucket(b) {

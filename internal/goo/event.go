@@ -30,8 +30,11 @@ const (
 type Event struct {
 	// Sequence is the global, monotonic position of this event in the log.
 	Sequence uint64 `json:"sequence"`
-	// ID is a content-derived unique id (sha256 of the object's data for PUTs,
-	// a synthetic id for deletes). Useful for idempotency debugging.
+	// ID is a per-mutation unique identifier, generated from the committed
+	// sequence, bucket, key and version. It is NOT a content digest: identical
+	// payloads PUT to different keys (or re-PUT to the same key) must produce
+	// distinct IDs so consumers using ID for idempotency never drop a real
+	// mutation. The content digest lives in Hash.
 	ID string `json:"id"`
 	// Action is one of ActionPut / ActionDelete.
 	Action string `json:"action"`
