@@ -2,29 +2,30 @@ package main
 
 import (
 	"flag"
-	"fmt"
+	"log"
+	"net/http"
 
+	"github.com/gur/goo/internal/api"
 	"github.com/gur/goo/internal/engine"
 )
 
-// cmdServer starts the HTTP object API + SSE event stream.
-// Implemented in internal/api (Phase 5).
+// cmdServer starts the HTTP object API and the SSE event stream.
 func cmdServer(args []string, root string) error {
 	fs := flag.NewFlagSet("server", flag.ContinueOnError)
 	addr := fs.String("addr", ":8080", "listen address")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+
 	e, err := engine.Open(root)
 	if err != nil {
 		return err
 	}
-	// the api package owns the HTTP wiring; we hand it the engine.
-	return runServer(*addr, e)
-}
+	defer e.Close()
 
-// runServer is defined in internal/api once the HTTP layer lands.
-// Until then it returns a clear message so the CLI is runnable for local ops.
-var runServer = func(addr string, e *engine.Engine) error {
-	return fmt.Errorf("server not wired yet (HTTP layer coming in phase 5)")
+	srv := api.NewServer(e)
+	srv.AttachSSE(api.NewSSEHub(e.Log()))
+
+	log.Printf("goo server listening on %s (root %s)", *addr, root)
+	return http.ListenAndServe(*addr, srv.Handler())
 }
