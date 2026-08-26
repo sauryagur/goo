@@ -13,9 +13,9 @@ var (
 	ErrInvalidKey    = errors.New("goo: invalid object key")
 )
 
-// Bucket names follow a conservative S3-like rule: 3-63 lowercase alphanumerics
+// Bucket names follow a conservative S3-like rule: 1-63 lowercase alphanumerics
 // and dashes/underscores. This keeps on-disk directory names safe and portable.
-var bucketRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$`)
+var bucketRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9._-]{0,61}[a-z0-9])?$`)
 
 // windowsReserved are bucket names that cannot be top-level directories on
 // Windows (case-insensitive). We reject them everywhere so a bucket created on
