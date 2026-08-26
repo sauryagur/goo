@@ -15,20 +15,24 @@
 //	  1. the object bytes + metadata are durably on disk (fsynced), and
 //	  2. the mutation event is durably appended to the log (fsynced).
 //
-//	The event log is the SOURCE OF TRUTH for the namespace. On restart we
-//	replay the log to rebuild the index, then prune any object bytes that exist
-//	on disk but have no corresponding event (a crash that happened between
-//	step 1 and step 2 leaves exactly that kind of orphan; pruning it keeps the
-//	invariant "every object has an event" true at rest).
+//	The event log is the SOURCE OF TRUTH for the namespace.
+//
+//	Put:  bytes first, then the PUT event. A crash between them leaves an
+//	      orphan byte with no event; rebuild prunes it.
+//	Delete: the DELETE (tombstone) event first, then the bytes are removed. A
+//	      crash between them leaves bytes with no index entry; rebuild prunes
+//	      them too. Either way the durable log and the rebuilt namespace agree.
 //
 //	Consequences:
 //	  - object-without-event can never survive a restart.
 //	  - event-without-object cannot happen, because bytes are written and
-//	    fsynced before the event is appended.
+//	    fsynced before the event is appended (and for deletes, the bytes are
+//	    removed only after the tombstone is durable, with rebuild as backstop).
 //	  - a reader never observes a commit whose event is not yet durable.
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -153,6 +157,11 @@ func (e *Engine) Put(bucket, key string, data io.Reader, overwrite bool) (goo.Ev
 
 // Delete removes an object and appends its DELETE event. Deleting a missing
 // object returns store.ErrNotFound and emits no event.
+//
+// Ordering (the mirror image of Put): commit the tombstone event FIRST, then
+// remove the bytes. A crash in between leaves bytes with no index entry, which
+// the next rebuild prunes — so the log stays the source of truth and we never
+// report a delete whose record isn't durable.
 func (e *Engine) Delete(bucket, key string) (goo.Event, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -160,12 +169,16 @@ func (e *Engine) Delete(bucket, key string) (goo.Event, error) {
 	if _, err := e.store.Stat(bucket, key); err != nil {
 		return goo.Event{}, err // not found: no mutation, no event
 	}
-	if err := e.store.Delete(bucket, key); err != nil {
-		return goo.Event{}, fmt.Errorf("delete object bytes: %w", err)
-	}
+	// commit the tombstone before touching the bytes.
 	ev, err := e.log.Append(goo.ActionDelete, bucket, key, 0, "", 0)
 	if err != nil {
 		return goo.Event{}, fmt.Errorf("append delete event: %w", err)
+	}
+	// removing the bytes is best-effort: if it fails, the index is already
+	// updated (below) and the next rebuild prunes any leftover bytes, so the
+	// namespace stays consistent with the durable event.
+	if err := e.store.Delete(bucket, key); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return ev, fmt.Errorf("delete object bytes: %w", err)
 	}
 	e.applyToIndex(ev)
 	return ev, nil

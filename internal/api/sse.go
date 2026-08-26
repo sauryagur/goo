@@ -69,15 +69,19 @@ func (h *SSEHub) Handle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no") // disable proxy buffering
 	flusher.Flush()
 
-	// 1) replay the requested history first.
-	if !h.replay(w, flusher, from, bucket, r) {
-		return // client gone during replay
-	}
-
-	// 2) then transition to live tailing.
+	// Subscribe BEFORE replaying so we don't miss an event appended in the
+	// gap between reading "last" and starting the live loop. We remember the
+	// cutoff and only forward live events strictly after it.
 	sub := h.log.Subscribe()
 	defer h.log.Unsubscribe(sub)
 
+	// 1) replay the requested history first.
+	last := h.replay(w, flusher, from, bucket, r)
+	if r.Context().Err() != nil {
+		return // client gone during replay
+	}
+
+	// 2) then transition to live tailing, skipping anything <= last.
 	for {
 		select {
 		case <-r.Context().Done():
@@ -86,6 +90,9 @@ func (h *SSEHub) Handle(w http.ResponseWriter, r *http.Request) {
 			if bucket != "" && ev.Bucket != bucket {
 				continue
 			}
+			if ev.Sequence <= last {
+				continue // already covered by replay
+			}
 			if sendEvent(w, flusher, ev) {
 				return
 			}
@@ -93,20 +100,23 @@ func (h *SSEHub) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// replay sends all events with sequence >= from up to the current end. It
-// returns false if the client disconnected mid-replay.
-func (h *SSEHub) replay(w http.ResponseWriter, f http.Flusher, from uint64, bucket string, r *http.Request) bool {
+// replay sends all events with sequence >= from up to the current end, and
+// returns the highest sequence it sent (0 if nothing was sent and the caller
+// should treat the log as empty). It returns early (last=0) if the client
+// disconnected mid-replay.
+func (h *SSEHub) replay(w http.ResponseWriter, f http.Flusher, from uint64, bucket string, r *http.Request) uint64 {
 	last, err := h.log.LastSequence()
 	if err != nil {
-		return true
+		return 0
 	}
 	if from == 0 {
 		from = 1
 	}
+	var sent uint64
 	for seq := from; seq <= last; seq++ {
 		select {
 		case <-r.Context().Done():
-			return false
+			return 0
 		default:
 		}
 		evs, err := h.log.Replay(seq)
@@ -118,10 +128,16 @@ func (h *SSEHub) replay(w http.ResponseWriter, f http.Flusher, from uint64, buck
 			continue
 		}
 		if sendEvent(w, f, ev) {
-			return false
+			return 0
 		}
+		sent = ev.Sequence
 	}
-	return true
+	// if we sent nothing (e.g. empty log or all filtered), the live loop can
+	// start from 0 safely.
+	if sent == 0 {
+		return 0
+	}
+	return sent
 }
 
 // sendEvent writes one SSE frame. Returns true if the client disconnected.
